@@ -1,0 +1,82 @@
+name: Build and Push ECR Image
+
+on:
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to build for
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: k8s-cicd-test
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve environment
+        id: resolve
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            env_name="${{ inputs.environment }}"
+          elif [ "${{ github.ref_name }}" = "main" ]; then
+            env_name="prod"
+          else
+            env_name="dev"
+          fi
+          case "${env_name}" in
+            dev)
+              echo "env_name=dev" >> "$GITHUB_OUTPUT"
+              echo "aws_region=cn-northwest-1" >> "$GITHUB_OUTPUT"
+              echo "role_arn=arn:aws-cn:iam::665444435332:role/github-actions-cicd-ecr" >> "$GITHUB_OUTPUT"
+              ;;
+            prod)
+              echo "env_name=prod" >> "$GITHUB_OUTPUT"
+              echo "aws_region=us-west-2" >> "$GITHUB_OUTPUT"
+              echo "role_arn=arn:aws:iam::820814109514:role/github-actions-cicd-ecr" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Unknown environment: ${env_name}" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.resolve.outputs.role_arn }}
+          aws-region: ${{ steps.resolve.outputs.aws_region }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          provenance: false
+          tags: ${{ steps.ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:git-${{ github.sha }}
+          labels: builder=${{ github.actor }}
