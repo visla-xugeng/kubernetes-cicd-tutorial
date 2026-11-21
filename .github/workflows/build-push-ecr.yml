@@ -80,3 +80,22 @@ jobs:
           provenance: false
           tags: ${{ steps.ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:git-${{ github.sha }}
           labels: builder=${{ github.actor }}
+
+      - name: Update GitOps values (dev)
+        if: steps.resolve.outputs.env_name == 'dev'
+        env:
+          GIT_TOKEN: ${{ secrets.GITOPS_PAT }}
+          IMAGE_TAG: git-${{ github.sha }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git clone https://x-access-token:${GIT_TOKEN}@github.com/visla-xugeng/test-portal.git gitops
+          cd gitops
+          sed -i "s|^  tag: .*|  tag: ${IMAGE_TAG}|" values-cn-northwest-1-dev-01.yaml
+          git add values-cn-northwest-1-dev-01.yaml
+          if git diff --cached --quiet; then
+            echo "tag already ${IMAGE_TAG}; nothing to commit"
+          else
+            git commit -m "deploy k8s-cicd-test ${IMAGE_TAG}"
+            git push origin main
+          fi
